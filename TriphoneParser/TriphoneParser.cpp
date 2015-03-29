@@ -92,8 +92,8 @@ string			work_dir		= "model_params";
 const string	sil("SIL");
 const char*		mdef_attr[]			= {"n_base", "n_tri", "n_state_map", "n_tied_state", "n_tied_ci_state", "n_tied_tmat"};
 const char*		justcopy_files[]	= {"noisedict", "transition_matrices", "feat.params"};
-const char*		args_name[]	= {"-dict", "-hmm", "-s", "-dir"};
-string *		args_ptr[] = {&dict_path, &acmod_path, &sentences_path, &work_dir};
+const char*		args_name[]			= {"-dict", "-hmm", "-s", "-dir"};
+string *		args_ptr[]			= {&dict_path, &acmod_path, &sentences_path, &work_dir};
 //-------------------------------------------------
 // –≈¿À»«¿÷»ﬂ
 //-------------------------------------------------
