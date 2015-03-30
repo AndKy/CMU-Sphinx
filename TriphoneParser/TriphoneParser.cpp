@@ -23,12 +23,13 @@ using namespace std;
 // ТИПЫ ДАННЫХ:
 //-------------------------------------------------
 typedef list <string>					PhonemeList;
+typedef list <PhonemeList>				TranscriptionsList;
 
 struct  DictionaryItem
 {
-	DictionaryItem() :added_to_triphonelist(false){}
-	PhonemeList transcription;
-	bool		added_to_triphonelist;
+	DictionaryItem() :	added_to_triphonelist(false){}
+	TranscriptionsList	transcriptions;
+	bool				added_to_triphonelist;
 };
 
 typedef tuple <string, string, string, char>	Triphone;
@@ -56,7 +57,7 @@ struct ModelDefinition
 
 typedef function<bool(const vector <string>&)>	LineFunction;
 typedef map <string, DictionaryItem>			Dictioany;
-typedef set <Triphone>							TriphoneSet;
+typedef map <Triphone, int>						TriphoneSet;
 typedef vector <int>							SenoneMap;
 
 //-------------------------------------------------
@@ -64,11 +65,14 @@ typedef vector <int>							SenoneMap;
 //-------------------------------------------------
 bool	load_dictionary (const string&, Dictioany&);
 bool	find_triphones (const string&, Dictioany&, TriphoneSet&);
-bool	insert_triphones ( Dictioany& , const list <string>& , TriphoneSet& );
 bool	read_mdef (const string&, ModelDefinition &, TriphoneSet &);
 bool	remap_senones(ModelDefinition&, const SenoneMap&);
 bool	inverse_senone_map(const SenoneMap&, SenoneMap&);
 bool	generate_copy(const string&, const string&, const SenoneMap&, const vector <INT32>&, int, int);
+bool	add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& triphones);
+void	add_triphones_from_sentence(const vector <PhonemeList *>& , TriphoneSet& );
+bool	add_triphones_from_sentence (Dictioany&, const list <string>&, TriphoneSet&);
+bool	print_triphone_freq(const TriphoneSet& );
 
 int		build_senone_map(const ModelDefinition&, SenoneMap&);
 void	generate_mdef (const ModelDefinition& , const SenoneMap& );
@@ -84,9 +88,9 @@ ostream& operator <<(ostream&, const SenoneMap& );
 //-------------------------------------------------
 // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 //-------------------------------------------------
-string			dict_path		= "C:\\Users\\Andrey\\Documents\\Visual Studio 2012\\Projects\\Sphinx\\pocketsphinx\\voxforge-ru-0.2\\etc\\led_commands.dic";
+string			dict_path		= "C:\\Users\\Andrey\\Documents\\Visual Studio 2012\\Projects\\Sphinx\\pocketsphinx\\voxforge-ru-0.2\\etc\\andky_words.dic";
 string			acmod_path		= "C:\\Users\\Andrey\\Documents\\Visual Studio 2012\\Projects\\Sphinx\\pocketsphinx\\voxforge-ru-0.2\\model_parameters\\msu_ru_nsh_breath.cd_cont_1000_8gau_8000";
-string			sentences_path	= "sentences.txt";
+string			sentences_path	= "C:\\Users\\Andrey\\Documents\\Visual Studio 2012\\Projects\\Sphinx\\pocketsphinx\\voxforge-ru-0.2\\etc\\sentenses.txt";
 string			work_dir		= "model_params";
 
 const string	sil("SIL");
@@ -111,6 +115,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	if (!load_dictionary(dict_path, dict) ||
 		!find_triphones (sentences_path, dict, triphones) ||
+		!print_triphone_freq (triphones) ||
 		!read_mdef(acmod_path + "\\mdef", mdef, triphones))
 	{
 		return -1;
@@ -158,8 +163,28 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 
 	std::cout << "Sucessful complete!\n";
+	std::cout << "Total number of CI triphones: " <<  setw(20) << mdef.n_ci << endl;
+	std::cout << "Total number of CD triphones: " <<  setw(20) << mdef.n_tri << endl;
+	std::cout << "Total number of senons: "		  <<  setw(20) << mdef.n_sen << endl;
 
 	return 0;
+}
+
+bool print_triphone_freq(const TriphoneSet& triphones)
+{
+	set <tuple<int, const Triphone*> > f;
+
+	for (auto &it : triphones)
+	{
+		f.insert(make_tuple(it.second, &it.first));
+	}
+
+	cout << "Triphone frequencies:\n";
+	for (auto &t : f)
+	{
+		cout << setw(4) << get<0>(t) << *get<1>(t) << endl;
+	}
+	return true;
 }
 
 void parse_cmd_line (int argc, _TCHAR* argv[])
@@ -579,7 +604,7 @@ ostream& operator <<(ostream& s, const TriphoneSet& triphones)
 {
 	for (const auto& x : triphones)
 	{
-		s << x << endl;
+		s << x.first << endl;
 	}
 	return s;
 }
@@ -600,7 +625,29 @@ ostream& operator <<(ostream& s, const ModelDefinition::Lines& lines)
 	return s;
 }
 
-bool insert_triphones ( Dictioany& dict, const list <string>& sentence, TriphoneSet& triphones)
+template <class A, 
+		  class B, 
+		  class C>
+void build_all_transcription(const tuple<A*,B*,C*> &args, int nword)
+{
+	A *words; 
+	B *trans; 
+	C *tri;
+
+	tie(words, trans, tri) = args;
+	if (nword < words->size())
+	{
+		for (auto& phonems : words->at(nword)->transcriptions)
+		{
+			trans->at(nword) = &phonems;
+			build_all_transcription(args, nword + 1);
+		}
+	}
+	else
+		add_triphones_from_sentence(*trans, *tri);
+}
+
+bool add_triphones_from_sentence (Dictioany& dict, const list <string>& sentence, TriphoneSet& triphones)
 {
 	vector <DictionaryItem *> words;
 
@@ -612,40 +659,17 @@ bool insert_triphones ( Dictioany& dict, const list <string>& sentence, Triphone
 		if (it != dict.end())
 		{
 			DictionaryItem &item = it->second;
-
 			words.push_back(&item);
 
 			if (!item.added_to_triphonelist)
 			{
-				if (item.transcription.empty())
+				for (const auto& trans : item.transcriptions)
 				{
-					cout << "Critical error: found empty transcription " << setw(30) << left << utf8_to_ansi(word);
-					return false;
-				}
-				else if (item.transcription.size() == 1)
-				{
-					triphones.insert(Triphone(item.transcription.front(), sil, sil, 's'));
-				}
-				else
-				{
-					// Читаем транскрипцию и добавляем все трифоны в коллекцию
-					auto jt = item.transcription.begin(); 
-					auto jt_next = jt; jt_next++;
-
-					// Начальный трифон
-					triphones.insert(Triphone(*jt, sil, *jt_next, 'b'));
-
-					auto jt_prev = jt;
-					jt++;
-					jt_next++;
-
-					for (; jt_next != item.transcription.end() ; jt++, jt_next++, jt_prev++)
+					if (!add_triphones_from_transcription (trans, triphones))
 					{
-						triphones.insert(Triphone(*jt, *jt_prev, *jt_next, 'i'));
+						cout << "Critical error: found wrong transcription " << setw(30) << left << utf8_to_ansi(word);
+						return false;
 					}
-
-					// Конечный трифон
-					triphones.insert(Triphone(*jt, *jt_prev, sil, 'e'));
 				}
 				item.added_to_triphonelist = true;
 			}
@@ -656,62 +680,105 @@ bool insert_triphones ( Dictioany& dict, const list <string>& sentence, Triphone
 			return false;
 		}
 	}
-	
+
+	vector <PhonemeList *> transcripted_words(words.size());
+
 	// Во-вторых, добавляем все трифоны возникающие на границе слов
 
+	build_all_transcription(make_tuple(&words, &transcripted_words, &triphones), 0);
+
+	return true;
+}
+
+
+void add_triphones_from_sentence(const vector <PhonemeList *>& words, TriphoneSet& triphones)
+{
 	string left_phone;
 	string middle_phone;
 	string right_phone;
 
 	for (int i = 1; i < words.size() ; i++)
 	{
-		middle_phone = words[i - 1]->transcription.back();
+		middle_phone = words[i - 1]->back();
 		left_phone = sil;
 
-		if (words[i - 1]->transcription.size() > 1)
-			left_phone = *(++words[i - 1]->transcription.rbegin());	// Для слова из неск. букв, левый контекст определяется предыдущей буквой
+		if (words[i - 1]->size() > 1)
+			left_phone = *(++words[i - 1]->rbegin());	// Для слова из неск. букв, левый контекст определяется предыдущей буквой
 		else if (i > 1)
-			left_phone = words[i - 2]->transcription.back();		// Для слова из одной буквы, левый контекст определяется последней буквой предыдущего слова (или sil)
+			left_phone = words[i - 2]->back();		// Для слова из одной буквы, левый контекст определяется последней буквой предыдущего слова (или sil)
 
-		right_phone = words[i]->transcription.front();
+		right_phone = words[i]->front();
 
-		if (words[i - 1]->transcription.size() > 1)
+		if (words[i - 1]->size() > 1)
 		{
-			triphones.insert(Triphone(middle_phone, left_phone, right_phone, 'e'));
+			triphones[Triphone(middle_phone, left_phone, right_phone, 'e')];
 		}
 		else
 		{
-			triphones.insert(Triphone(middle_phone, left_phone, right_phone, 's'));
+			triphones[Triphone(middle_phone, left_phone, right_phone, 's')];
 			if (right_phone != sil)
-				triphones.insert(Triphone(middle_phone, left_phone, sil, 's'));
+				triphones[Triphone(middle_phone, left_phone, sil, 's')];
 			if (left_phone != sil)
-				triphones.insert(Triphone(middle_phone, sil, right_phone, 's'));
+				triphones[Triphone(middle_phone, sil, right_phone, 's')];
 		}
 
-		middle_phone = words[i]->transcription.front();
+		middle_phone = words[i]->front();
 
-		left_phone = words[i-1]->transcription.back();				// Для слова из неск. букв, левый контекст определяется последней буквой предыдущего слова 
+		left_phone = words[i-1]->back();				// Для слова из неск. букв, левый контекст определяется последней буквой предыдущего слова 
 		right_phone = sil;
 
-		if (words[i]->transcription.size() > 1)
-			right_phone = *(++words[i]->transcription.begin());		// Для слова из неск. букв, правый контекст определяется следующей буквой 
+		if (words[i]->size() > 1)
+			right_phone = *(++words[i]->begin());		// Для слова из неск. букв, правый контекст определяется следующей буквой 
 		else if (i < words.size() - 1)
-			right_phone = words[i+1]->transcription.front();		// Для слова из одной буквы, правый контекст определяется первой буквой следующего слова (или sil)
+			right_phone = words[i+1]->front();		// Для слова из одной буквы, правый контекст определяется первой буквой следующего слова (или sil)
 
-		if (words[i]->transcription.size() > 1)
+		if (words[i]->size() > 1)
 		{
-			triphones.insert(Triphone(middle_phone, left_phone, right_phone, 'b'));
+			triphones[Triphone(middle_phone, left_phone, right_phone, 'b')];
 		}
 		else
 		{
-			triphones.insert(Triphone(middle_phone, left_phone, right_phone, 's'));
+			triphones[Triphone(middle_phone, left_phone, right_phone, 's')];
 			if (right_phone != sil)
-				triphones.insert(Triphone(middle_phone, left_phone, sil, 's'));
+				triphones[Triphone(middle_phone, left_phone, sil, 's')];
 			if (left_phone != sil)
-				triphones.insert(Triphone(middle_phone, sil, right_phone, 's'));
+				triphones[Triphone(middle_phone, sil, right_phone, 's')];
 		}
 	}
+}
 
+bool add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& triphones)
+{
+	// При добавлении трифона в данной функции проводится учет количества
+	if (trans.empty())
+	{
+		return false;
+	}
+	else if (trans.size() == 1)
+	{
+		triphones[Triphone(trans.front(), sil, sil, 's')] ++;
+	}
+	else
+	{
+		// Читаем транскрипцию и добавляем все трифоны в коллекцию
+		auto jt = trans.begin(); 
+		auto jt_next = jt; jt_next++;
+
+		// Начальный трифон
+		triphones[Triphone(*jt, sil, *jt_next, 'b')] ++;
+
+		auto jt_prev = jt;
+		jt++;
+		jt_next++;
+
+		for (; jt_next != trans.end() ; jt++, jt_next++, jt_prev++)
+		{
+			triphones[Triphone(*jt, *jt_prev, *jt_next, 'i')]++;
+		}
+
+		// Конечный трифон
+		triphones[Triphone(*jt, *jt_prev, sil, 'e')]++;
+	}
 	return true;
 }
 
@@ -741,7 +808,7 @@ bool find_triphones (const string& filename, Dictioany& dict, TriphoneSet& triph
 			if (tokens.empty())
 				continue;
 
-			if (!insert_triphones (dict, tokens, triphones))
+			if (!add_triphones_from_sentence (dict, tokens, triphones))
 				return false;
 
 			line_n ++;
@@ -786,18 +853,17 @@ bool load_dictionary (const string& filename, Dictioany& dict)
 			if (tokens.empty())
 				continue;
 
-			string			word = tokens.front();
+			string word = tokens.front();
+			
+			word = string(word.begin(), find(word.begin(), word.end(), '('));
+			
+			DictionaryItem &item = dict[word];
+			item.transcriptions.push_back(PhonemeList());
 
-			PhonemeList& 	phonemes = dict[word].transcription;
 
-			if (phonemes.empty())
-			{
-				phonemes.splice(phonemes.end(), tokens, ++tokens.begin(), tokens.end());
-			}
-			else
-			{
-				std::cout << "\rDictionary contains dublicate of word: " << word << endl;
-			}
+			PhonemeList &phonemes = item.transcriptions.back();
+			phonemes.splice(phonemes.end(), tokens, ++tokens.begin(), tokens.end());
+
 			line_n ++;
 
 			if (line_n % 100 == 0)
