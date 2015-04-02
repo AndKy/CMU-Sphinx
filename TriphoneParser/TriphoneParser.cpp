@@ -32,7 +32,24 @@ struct  DictionaryItem
 	bool				added_to_triphonelist;
 };
 
-typedef tuple <string, string, string, char>	Triphone;
+//typedef tuple <string, string, string, char>	Triphone;
+struct Triphone
+{
+	string			base, left, right;
+	char			wpos;
+	string			source;
+
+	Triphone() : wpos(0) {}
+	Triphone(string b, string l, string r, char p, string src = string()) :
+		base(b), left(l), right(r), wpos(p), source(src) {}
+	bool operator <(const Triphone &a) const
+	{
+		if (base != a.base) return base < a.base;
+		if (left != a.left) return left < a.left;
+		if (right != a.right) return right < a.right;
+		return wpos < a.wpos;
+	}
+};
 
 struct ModelDefinition
 {
@@ -69,7 +86,7 @@ bool	read_mdef (const string&, ModelDefinition &, TriphoneSet &);
 bool	remap_senones(ModelDefinition&, const SenoneMap&);
 bool	inverse_senone_map(const SenoneMap&, SenoneMap&);
 bool	generate_copy(const string&, const string&, const SenoneMap&, const vector <INT32>&, int, int);
-bool	add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& triphones);
+bool	add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& triphones, const string&);
 void	add_triphones_from_sentence(const vector <PhonemeList *>& , TriphoneSet& );
 bool	add_triphones_from_sentence (Dictioany&, const list <string>&, TriphoneSet&);
 bool	print_triphone_freq(const TriphoneSet& );
@@ -86,11 +103,11 @@ ostream& operator <<(ostream&, const SenoneMap& );
 
 #define NUMEL(x) (sizeof(x) / sizeof(*(x)))
 //-------------------------------------------------
-// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕC:
 //-------------------------------------------------
-string			dict_path		= "C:\\Users\\Andrey\\Documents\\Visual Studio 2012\\Projects\\Sphinx\\pocketsphinx\\voxforge-ru-0.2\\etc\\andky_words.dic";
-string			acmod_path		= "C:\\Users\\Andrey\\Documents\\Visual Studio 2012\\Projects\\Sphinx\\pocketsphinx\\voxforge-ru-0.2\\model_parameters\\msu_ru_nsh_breath.cd_cont_1000_8gau_8000";
-string			sentences_path	= "C:\\Users\\Andrey\\Documents\\Visual Studio 2012\\Projects\\Sphinx\\pocketsphinx\\voxforge-ru-0.2\\etc\\sentenses.txt";
+string			dict_path		= "dictionary.dic";
+string			acmod_path		= "src_model_params";
+string			sentences_path	= "sentences.txt";
 string			work_dir		= "model_params";
 
 const string	sil("SIL");
@@ -163,9 +180,9 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 
 	std::cout << "Sucessful complete!\n";
-	std::cout << "Total number of CI triphones: " <<  setw(20) << mdef.n_ci << endl;
-	std::cout << "Total number of CD triphones: " <<  setw(20) << mdef.n_tri << endl;
-	std::cout << "Total number of senons: "		  <<  setw(20) << mdef.n_sen << endl;
+	std::cout << setw(30) << "Total number of CI triphones: " << dec << mdef.n_ci << endl;
+	std::cout << setw(30) << "Total number of CD triphones: " << dec << mdef.n_tri << endl;
+	std::cout << setw(30) << "Total number of senons: "		  << dec << mdef.n_sen << endl;
 
 	return 0;
 }
@@ -557,8 +574,8 @@ bool read_mdef (const string& filename, ModelDefinition &mdef, TriphoneSet &trip
 		if (mdef.lines.size() < total)
 		{
 			cout << "Cant find triphones in mdef file:\n" << triphones;
+			total = mdef.lines.size();
 		}
-
 
 		mdef.n_tri = total - mdef.n_ci;
 		mdef.n_map = total * 4;
@@ -594,17 +611,17 @@ ostream& operator <<(ostream& s, const SenoneMap& senmap)
 
 ostream& operator <<(ostream& s, const Triphone& x)
 {
-	return s << setw(max(5, get<0>(x).size())) << utf8_to_ansi(get<0>(x))
-			 << setw(4) << utf8_to_ansi(get<1>(x)) 
-			 << setw(4) << utf8_to_ansi(get<2>(x))
-			 << setw(2) << get<3>(x);
+	return s << setw(max(5, x.base.size())) << utf8_to_ansi(x.base)
+			 << setw(4) << utf8_to_ansi(x.left) 
+			 << setw(4) << utf8_to_ansi(x.right)
+			 << setw(2) << x.wpos;
 }
 
 ostream& operator <<(ostream& s, const TriphoneSet& triphones)
 {
 	for (const auto& x : triphones)
 	{
-		s << x.first << endl;
+		s << x.first << " (" << (x.first.source.empty() ? utf8_to_ansi("CROSS WORD") : x.first.source.c_str()) << ")" <<  endl;
 	}
 	return s;
 }
@@ -665,7 +682,7 @@ bool add_triphones_from_sentence (Dictioany& dict, const list <string>& sentence
 			{
 				for (const auto& trans : item.transcriptions)
 				{
-					if (!add_triphones_from_transcription (trans, triphones))
+					if (!add_triphones_from_transcription (trans, triphones, word))
 					{
 						cout << "Critical error: found wrong transcription " << setw(30) << left << utf8_to_ansi(word);
 						return false;
@@ -747,7 +764,7 @@ void add_triphones_from_sentence(const vector <PhonemeList *>& words, TriphoneSe
 	}
 }
 
-bool add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& triphones)
+bool add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& triphones, const string& source)
 {
 	// При добавлении трифона в данной функции проводится учет количества
 	if (trans.empty())
@@ -756,7 +773,7 @@ bool add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& tri
 	}
 	else if (trans.size() == 1)
 	{
-		triphones[Triphone(trans.front(), sil, sil, 's')] ++;
+		triphones[Triphone(trans.front(), sil, sil, 's', source)] ++;
 	}
 	else
 	{
@@ -765,7 +782,7 @@ bool add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& tri
 		auto jt_next = jt; jt_next++;
 
 		// Начальный трифон
-		triphones[Triphone(*jt, sil, *jt_next, 'b')] ++;
+		triphones[Triphone(*jt, sil, *jt_next, 'b', source)] ++;
 
 		auto jt_prev = jt;
 		jt++;
@@ -773,11 +790,11 @@ bool add_triphones_from_transcription(const PhonemeList &trans, TriphoneSet& tri
 
 		for (; jt_next != trans.end() ; jt++, jt_next++, jt_prev++)
 		{
-			triphones[Triphone(*jt, *jt_prev, *jt_next, 'i')]++;
+			triphones[Triphone(*jt, *jt_prev, *jt_next, 'i', source)]++;
 		}
 
 		// Конечный трифон
-		triphones[Triphone(*jt, *jt_prev, sil, 'e')]++;
+		triphones[Triphone(*jt, *jt_prev, sil, 'e', source)]++;
 	}
 	return true;
 }
@@ -812,10 +829,7 @@ bool find_triphones (const string& filename, Dictioany& dict, TriphoneSet& triph
 				return false;
 
 			line_n ++;
-
-			std::cout << "\rRead: " << setw(30) << left << utf8_to_ansi(line) << "\r";
 		}
-		std::cout << "\r" << setw(30) << " " << "\r";
 		std::cout << "Readed " << line_n << " lines\n";
 		return true;
 	}
